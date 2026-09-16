@@ -1,15 +1,18 @@
 import json
 import os
+import re
 
 import requests
-from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 
 
 PRODUCT_NAME = "Pokémon Trading Card Game: 30th Celebration Elite Trainer Box"
 
-PRODUCT_URL = "https://www.target.com/p/pok-233-mon-trading-card-game-30th-celebration-elite-trainer-box/-/A-1010892076"
-
-OUT_OF_STOCK_TEXT = "out of stock"
+PRODUCT_URL = (
+    "https://www.target.com/p/"
+    "pok-233-mon-trading-card-game-30th-celebration-elite-trainer-box/"
+    "-/A-1010892076"
+)
 
 PRODUCT_MARKER = "30th celebration elite trainer box"
 
@@ -20,35 +23,87 @@ STATE_FILE = os.path.join(BASE_DIR, "state.json")
 
 def check_stock():
 
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+    with sync_playwright() as p:
 
-    response = requests.get(
-        PRODUCT_URL,
-        headers=headers,
-        timeout=20
-    )
+        browser = p.chromium.launch(headless=True)
 
-    response.raise_for_status()
+        page = browser.new_page()
 
-    soup = BeautifulSoup(
-        response.text,
-        "html.parser"
-    )
-
-    page_text = soup.get_text(
-        " ",
-        strip=True
-    ).lower()
-
-    if PRODUCT_MARKER.lower() not in page_text:
-        raise RuntimeError(
-            "Could not verify the Target product page. "
-            "Target may have blocked the request."
+        page.goto(
+            PRODUCT_URL,
+            wait_until="domcontentloaded",
+            timeout=60000
         )
 
-    return OUT_OF_STOCK_TEXT.lower() not in page_text
+        # Give Target time to load the product information
+        page.wait_for_timeout(5000)
+
+        page_text = page.locator("body").inner_text().lower()
+
+        # Verify that Target loaded the correct product
+        if PRODUCT_MARKER not in page_text:
+            browser.close()
+
+            raise RuntimeError(
+                "Could not verify Target product page. "
+                "No Discord alert was sent."
+            )
+
+        # First check for an explicit Out of Stock message
+        out_of_stock = page.get_by_text(
+            "Out of Stock",
+            exact=True
+        )
+
+        if out_of_stock.count() > 0:
+
+            for i in range(out_of_stock.count()):
+
+                if out_of_stock.nth(i).is_visible():
+
+                    print("Target displays: Out of Stock")
+
+                    browser.close()
+
+                    return False
+
+
+        # If it does not say Out of Stock,
+        # inspect the first visible Add to cart button
+        buttons = page.get_by_role(
+            "button",
+            name=re.compile(
+                r"add to cart",
+                re.IGNORECASE
+            )
+        )
+
+        for i in range(buttons.count()):
+
+            button = buttons.nth(i)
+
+            if button.is_visible():
+
+                enabled = button.is_enabled()
+
+                print(
+                    "Main Add to cart button enabled:",
+                    enabled
+                )
+
+                browser.close()
+
+                return enabled
+
+
+        browser.close()
+
+        # Never assume stock if Target gives us an unclear page
+        raise RuntimeError(
+            "Could not safely determine Target stock status. "
+            "No Discord alert was sent."
+        )
+
 
 def send_discord_alert():
 
@@ -115,6 +170,7 @@ else:
 
 
 state["in_stock"] = current_stock
+
 
 with open(STATE_FILE, "w") as file:
 
