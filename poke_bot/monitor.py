@@ -5,9 +5,13 @@ import requests
 from bs4 import BeautifulSoup
 
 
-PRODUCT_NAME = "Pokemon Product"
-PRODUCT_URL = "https://example.com/product"
-IN_STOCK_TEXT = "add to cart"
+PRODUCT_NAME = "Pokémon Trading Card Game: 30th Celebration Elite Trainer Box"
+
+PRODUCT_URL = "https://www.target.com/p/pok-233-mon-trading-card-game-30th-celebration-elite-trainer-box/-/A-1010892076"
+
+OUT_OF_STOCK_TEXT = "out of stock"
+
+PRODUCT_MARKER = "30th celebration elite trainer box"
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -38,8 +42,13 @@ def check_stock():
         strip=True
     ).lower()
 
-    return IN_STOCK_TEXT.lower() in page_text
+    if PRODUCT_MARKER.lower() not in page_text:
+        raise RuntimeError(
+            "Could not verify the Target product page. "
+            "Target may have blocked the request."
+        )
 
+    return OUT_OF_STOCK_TEXT.lower() not in page_text
 
 def send_discord_alert():
 
